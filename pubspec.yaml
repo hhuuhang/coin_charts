@@ -34,6 +34,7 @@ dependencies:
   http: any
   web_socket_channel: any
   candlesticks: any
+  k_chart_plus: ^1.0.4
   provider: any
   google_fonts: any
   intl: any

@@ -5,6 +5,13 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/crypto_symbol.dart';
 import '../services/binance_api_service.dart';
 
+enum SortCriteria {
+  marketCap,
+  volume,
+  gainers,
+  losers,
+}
+
 class CryptoProvider with ChangeNotifier {
   final _apiService = BinanceApiService();
   
@@ -18,6 +25,9 @@ class CryptoProvider with ChangeNotifier {
   bool get isLoading => _isLoading;
 
   String _searchQuery = '';
+  
+  SortCriteria _currentSort = SortCriteria.marketCap;
+  SortCriteria get currentSort => _currentSort;
 
   WebSocketChannel? _tickerChannel;
 
@@ -28,19 +38,20 @@ class CryptoProvider with ChangeNotifier {
 
       final fetchedSymbols = await _apiService.fetchSymbols();
       final tickerData = await _apiService.fetch24hTicker();
+      final marketCaps = await _apiService.fetchMarketCaps();
 
       for (var symbol in fetchedSymbols) {
         if (tickerData.containsKey(symbol.symbol)) {
           symbol.price = tickerData[symbol.symbol]['price'];
           symbol.priceChangePercent = tickerData[symbol.symbol]['priceChangePercent'];
+          symbol.volume = tickerData[symbol.symbol]['volume'];
         }
+        final baseUpper = symbol.baseAsset.toUpperCase();
+        symbol.marketCap = marketCaps[baseUpper] ?? (symbol.volume > 0 ? symbol.volume * 5.2 : symbol.price * 150000.0);
       }
 
-      // Sort by volume or name, here we sort by absolute price change as an example to show active coins
-      fetchedSymbols.sort((a, b) => b.priceChangePercent.abs().compareTo(a.priceChangePercent.abs()));
-
       _symbols = fetchedSymbols;
-      _filteredSymbols = _symbols;
+      _applySorting();
       
       _connectTickerWebSocket();
 
@@ -53,10 +64,41 @@ class CryptoProvider with ChangeNotifier {
     }
   }
 
+  void _applySorting() {
+    switch (_currentSort) {
+      case SortCriteria.marketCap:
+        _symbols.sort((a, b) => b.marketCap.compareTo(a.marketCap));
+        break;
+      case SortCriteria.volume:
+        _symbols.sort((a, b) => b.volume.compareTo(a.volume));
+        break;
+      case SortCriteria.gainers:
+        _symbols.sort((a, b) => b.priceChangePercent.compareTo(a.priceChangePercent));
+        break;
+      case SortCriteria.losers:
+        _symbols.sort((a, b) => a.priceChangePercent.compareTo(b.priceChangePercent));
+        break;
+    }
+    _filterSymbolsList();
+  }
+
+  void changeSortCriteria(SortCriteria criteria) {
+    if (_currentSort != criteria) {
+      _currentSort = criteria;
+      _applySorting();
+      notifyListeners();
+    }
+  }
+
   void searchSymbols(String query) {
     _searchQuery = query.toLowerCase();
+    _filterSymbolsList();
+    notifyListeners();
+  }
+
+  void _filterSymbolsList() {
     if (_searchQuery.isEmpty) {
-      _filteredSymbols = _symbols;
+      _filteredSymbols = List.from(_symbols);
     } else {
       _filteredSymbols = _symbols
           .where((s) =>
@@ -64,7 +106,6 @@ class CryptoProvider with ChangeNotifier {
               s.baseAsset.toLowerCase().contains(_searchQuery))
           .toList();
     }
-    notifyListeners();
   }
 
   void _connectTickerWebSocket() {
